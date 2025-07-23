@@ -30,11 +30,28 @@ def check_sample(samples: SampleType):
 
 
 class DefaultTransformKwargs(TypedDict):
-    resize: int | Sequence[int]
+    resize: int | tuple[int, int]
     p_h_flip: float
 
 
 class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
+    """
+    Examples:
+
+        from ds_utils.huggan_smithsonian_butterflies_subset import HugganSmithsonianButterfliesSubsetDataset
+
+        dataset = HugganSmithsonianButterfliesSubsetDataset()
+
+        print(dataset)
+
+        dataset[:5]["images"].shape # torch.Size([5, 3, 128, 128])
+
+        dataset.show_images(range(5))
+
+        dataset.show_images(range(5),raw=False)
+
+    """
+
     ds_path = "huggan/smithsonian_butterflies_subset"
     df_tf_kwargs = DefaultTransformKwargs(resize=(128, 128), p_h_flip=0.5)
 
@@ -110,45 +127,59 @@ class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
 
     def __repr__(self):
         return self._dataset.__repr__()
-    
-    def show_images(self, indexes: Sequence[int]|range|Iterable, img_per_row=None, raw: bool = True):
-        img_per_row = img_per_row or max(5, int(len(indexes) / 2))
-        n_rows = ceil(len(indexes) / img_per_row)
-        fig, axes = plt.subplots(
-            n_rows, img_per_row, figsize=(img_per_row * 2, n_rows * 2)
-        )
-        axes = axes.flatten()
 
-        images: list[Image.Image] | np.ndarray | torch.Tensor| None = None
+    def show_images(
+        self,
+        indexes: Sequence[int] | range | Iterable,
+        img_per_row=None,
+        raw: bool = True,
+    ):
+
+        images: list[Image.Image] | np.ndarray | torch.Tensor
+
         # noinspection PyTypeChecker
         samples: SampleType = self[indexes]
         if raw:
             images = samples["raw_images"]
         else:
             images = (samples["images"] / 2 + 0.5).permute(0, 2, 3, 1).numpy()
+        self.show(images, img_per_row)
+
+    @classmethod
+    def show(
+        cls,
+        images: np.ndarray|list[Image.Image] ,
+        img_per_row=None,
+    ):
+        n_imgs = len(images)
+        img_per_row = img_per_row or max(5, int(n_imgs / 2))
+        n_rows = ceil(n_imgs / img_per_row)
+        fig, axes = plt.subplots(
+            n_rows, img_per_row, figsize=(img_per_row * 2, n_rows * 2)
+        )
+        axes = axes.flatten()
 
         for i, img in enumerate(images):
             if isinstance(img, Image.Image):
-                assert raw==True
-                title =  f"Size (WxH): {img.size}"
+                title = f"Size (WxH): {img.size}"
             else:
-                assert raw==False and isinstance(img,np.ndarray)
+                assert isinstance(img, np.ndarray)
                 title = f"Size (HxW): {img.shape[:-1]}"
-                
+
             ax = axes[i]
             ax.imshow(img)
             ax.set_title(title)
             ax.axis("off")  # Hide axes ticks and labels
-            
+
         for j in range(len(images), len(axes)):
             fig.delaxes(axes[j])
 
         plt.tight_layout()
         plt.show()
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     dataset = HugganSmithsonianButterfliesSubsetDataset()
     print(dataset)
     dataset.show_images(range(5))
     dataset.show_images(range(5), raw=False)
-
