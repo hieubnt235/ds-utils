@@ -2,17 +2,21 @@ from math import isclose
 
 import torch
 
-from ds_utils.huggan_smithsonian_butterflies_subset import Dataset, SampleType
+from ds_utils.huggan_smithsonian_butterflies_subset import Dataset, SampleType, DataModule
 import pytest
 from PIL.Image import Image
 from torchvision.transforms import v2
-@pytest.fixture
+@pytest.fixture(scope="module")
 def dataset():
     return Dataset()
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def split_datasets()->tuple[Dataset,Dataset]:
     return Dataset.split(0.8)
+
+@pytest.fixture(scope="module")
+def data_module():
+    return DataModule()
 
 @pytest.mark.parametrize("indexes",[[1,2,3], [3,5,6,6], range(2),*[i for i in range(2)]])
 def test_sample(dataset, indexes):
@@ -56,4 +60,19 @@ def test_split(idx, resize, train_ratio):
     assert isinstance(imgs:=val_ds[idx]["images"],torch.Tensor) and len(vs:=imgs.shape)==3 and vs[0]==3
     assert vs[1:] == val_ds.tf_kw["resize"]
     
+
+def test_data_module(data_module):
+    assert data_module.train_ds is None and data_module.val_ds is None
+    data_module.prepare_data()
+    assert isinstance(data_module.train_ds, Dataset) and isinstance(data_module.val_ds, Dataset)
     
+    train_dl = data_module.train_dataloader()
+    val_dl = data_module.val_dataloader()
+    test_dl = data_module.test_dataloader()
+    predict_dl = data_module.predict_dataloader()
+    
+    batch = next(iter(train_dl))
+    assert isinstance(batch,torch.Tensor)
+    assert batch.size(0) == data_module.config.train_dl_cfg.batchsize
+    assert batch.size(1) == 3
+    assert batch.shape[2:] == data_module.train_ds.tf_kw["resize"]

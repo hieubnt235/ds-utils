@@ -34,7 +34,7 @@ def check_sample(samples: SampleType):
 
 class DefaultTransformKwargs(TypedDict):
     resize: int | tuple[int, int]
-    """(H,W)"""
+    """The size (H,W) that all images must be for batching."""
 
     p_h_flip: float
 
@@ -98,8 +98,12 @@ class HugganSmithsonianButterfliesSubsetDataset(TorchDataset[SampleType]):
 
         self.mode = mode
         ds = default_tf_kwargs.pop("__dataset__", None)  # This is set by split method
-        self._dataset: ArrDataset = ds or load_dataset(self.ds_path, split="train")
+        self._dataset: ArrDataset = ds or self.load_dataset()
         self._dataset.set_transform(lambda ex: self.transform(ex["image"]))
+
+    @classmethod
+    def load_dataset(cls):
+        return load_dataset(cls.ds_path, split="train")
 
     @classmethod
     def split(
@@ -111,7 +115,7 @@ class HugganSmithsonianButterfliesSubsetDataset(TorchDataset[SampleType]):
     ) -> tuple[Self, Self]:
         assert 1 > train_ratio > 0
         assert "__dataset__" not in dataset_kwargs
-        ds_dict = load_dataset(cls.ds_path, split="train").train_test_split(
+        ds_dict = cls.load_dataset().train_test_split(
             train_size=train_ratio, shuffle=shuffle
         )
 
