@@ -1,40 +1,45 @@
 from collections.abc import Iterable
-from math import ceil
-from typing import TypedDict, Sequence, Callable
+from math import ceil, isclose
+from typing import TypedDict, Sequence, Callable, Literal, Self
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
-from datasets import load_dataset
+from PIL import Image
+from datasets import load_dataset, Dataset as ArrDataset
+from torch.utils.data import Dataset as TorchDataset
 from torch.utils.data.dataset import _T_co
 from torchvision.transforms import v2
-from torch.utils.data import Dataset
-from PIL import Image
-import numpy as np
-import matplotlib.pyplot as plt
-from datasets import Dataset as ArrDataset
 
 
 class SampleType(TypedDict):
-    raw_images: list[Image.Image]
+    raw_images: list[Image.Image] | Image.Image
     images: torch.Tensor
     """
-    Float tensor with shape (batchsize, channels, height, width), values must in range [-1,1]
+    Float tensor with shape (batchsize, channels, height, width) or (C,H,W), values must in range [-1,1]
     """
 
 
 def check_sample(samples: SampleType):
-    assert (imgs := samples["images"]).max() <= 1.0
-    assert imgs.min() >= -1.0
+    imgs = samples["images"]
+    assert imgs.max() <= 1.0 or isclose(imgs.max(), 1.0, abs_tol=1e-6)
+    assert imgs.min() >= -1.0 or isclose(imgs.min(), -1.0, abs_tol=1e-6)
     assert torch.is_floating_point(imgs)
-    assert len((s := imgs.shape)) == 4
-    assert s[1] == 3
+
+    if len(imgs.shape) == 4:
+        imgs = imgs[0]
+    assert len(s := imgs.shape) == 3
+    assert s[0] == 3
 
 
 class DefaultTransformKwargs(TypedDict):
     resize: int | tuple[int, int]
+    """(H,W)"""
+
     p_h_flip: float
 
 
-class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
+class HugganSmithsonianButterfliesSubsetDataset(TorchDataset[SampleType]):
     """
     Examples:
 
@@ -57,45 +62,70 @@ class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
 
     def __init__(
         self,
-        transform: Callable[[list[Image.Image]], torch.Tensor] | None = None,
+        transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        mode: Literal["train", "val"] = "train",
         **default_tf_kwargs,
     ):
         """
 
         Args:
-            transform: Fuction with input is list[Image] and return Float tensor with shape (batchsize, channels, height, width),
+            transform: Function with input and output are  Float tensor with shape (batchsize, channels, height, width) or (C,H,W)
              values must in range [-1,1].
             **default_tf_kwargs:
         """
 
-        self._dataset: ArrDataset = load_dataset(self.ds_path, split="train")
-        self.tf_func: Callable[[list[Image.Image]], SampleType] | None = None
-        self._to_resized_images: v2.Transform | None = None
-        self._transform: v2.Transform | None = None
+        self.tf_kw: DefaultTransformKwargs = self.df_tf_kwargs
+        self.tf_kw.update(default_tf_kwargs)
 
-        if transform:
-            self.tf_func: Callable[[list[Image.Image]], SampleType] = (
-                lambda imgs: SampleType(raw_images=imgs, images=transform(imgs))
-            )
-        else:
-            tf_kw = self.df_tf_kwargs
-            tf_kw.update(default_tf_kwargs)
+        self._preprocess_images = v2.Compose(
+            [
+                v2.ToImage(),  # Always resize in the very first of pipeline, when data is in uint8
+                v2.Resize(self.tf_kw["resize"]),
+                v2.ToDtype(dtype=torch.float, scale=True),
+                v2.Normalize([0.5], [0.5]),
+            ]
+        )
 
-            self._to_resized_images = v2.Compose(
+        if not transform:
+            transform = v2.Compose(
                 [
-                    v2.ToImage(),
-                    # Always resize in the very first of pipeline, when data is in uint8
-                    v2.Resize(tf_kw["resize"]),
+                    v2.RandomHorizontalFlip(
+                        self.tf_kw["p_h_flip"]
+                    ),  # convert to [-1,1]
                 ]
             )
-            self._transform = v2.Compose(
-                [
-                    v2.ToDtype(dtype=torch.float, scale=True),
-                    v2.RandomHorizontalFlip(tf_kw["p_h_flip"]),  # convert to [-1,1]
-                    v2.Normalize([0.5], [0.5]),
-                ]
-            )
+        self._transform: Callable[[torch.Tensor], torch.Tensor] = transform
+
+        self.mode = mode
+        ds = default_tf_kwargs.pop("__dataset__", None)  # This is set by split method
+        self._dataset: ArrDataset = ds or load_dataset(self.ds_path, split="train")
         self._dataset.set_transform(lambda ex: self.transform(ex["image"]))
+
+    @classmethod
+    def split(
+        cls,
+        train_ratio: float = 0.8,
+        shuffle: bool = True,
+        *dataset_args,
+        **dataset_kwargs,
+    ) -> tuple[Self, Self]:
+        assert 1 > train_ratio > 0
+        assert "__dataset__" not in dataset_kwargs
+        ds_dict = load_dataset(cls.ds_path, split="train").train_test_split(
+            train_size=train_ratio, shuffle=shuffle
+        )
+
+        return (
+            cls(
+                *dataset_args,
+                **dataset_kwargs,
+                mode="train",
+                __dataset__=ds_dict["train"],
+            ),
+            cls(
+                *dataset_args, **dataset_kwargs, mode="val", __dataset__=ds_dict["test"]
+            ),
+        )
 
     def transform(
         self, images: list[Image.Image] | np.ndarray | torch.Tensor
@@ -109,13 +139,14 @@ class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
             SampleType
 
         """
-        if self.tf_func:
-            samples = self.tf_func(images)
-        else:
-            resized_images = torch.stack(self._to_resized_images(images), 0)
-            samples = SampleType(
-                images=self._transform(resized_images), raw_images=images
-            )
+        processed_images = torch.stack(self._preprocess_images(images), 0)
+        tf_images = (
+            self._transform(processed_images)
+            if self.mode == "train"
+            else processed_images
+        )
+
+        samples = SampleType(images=tf_images, raw_images=images)
         check_sample(samples)
         return samples
 
@@ -148,7 +179,7 @@ class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
     @classmethod
     def show(
         cls,
-        images: np.ndarray|list[Image.Image] ,
+        images: np.ndarray | list[Image.Image],
         img_per_row=None,
     ):
         n_imgs = len(images)
@@ -178,8 +209,10 @@ class HugganSmithsonianButterfliesSubsetDataset(Dataset[SampleType]):
         plt.show()
 
 
+Dataset = HugganSmithsonianButterfliesSubsetDataset
+
 if __name__ == "__main__":
-    dataset = HugganSmithsonianButterfliesSubsetDataset()
+    dataset = Dataset()
     print(dataset)
     dataset.show_images(range(5))
     dataset.show_images(range(5), raw=False)

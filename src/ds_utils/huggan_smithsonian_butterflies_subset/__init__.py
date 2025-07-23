@@ -1,1 +1,1 @@
-from ._dataset import HugganSmithsonianButterfliesSubsetDataset, SampleType
+from ._dataset import Dataset, SampleType

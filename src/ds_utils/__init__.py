@@ -1,1 +1,0 @@
-from .huggan_smithsonian_butterflies_subset import HugganSmithsonianButterfliesSubsetDataset
