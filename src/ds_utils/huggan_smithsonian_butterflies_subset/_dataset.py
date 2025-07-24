@@ -185,6 +185,7 @@ class HugganSmithsonianButterfliesSubsetDataset(TorchDataset[SampleType]):
         cls,
         images: np.ndarray | list[Image.Image],
         img_per_row=None,
+        **kwargs
     ):
         n_imgs = len(images)
         img_per_row = img_per_row or max(5, int(n_imgs / 2))

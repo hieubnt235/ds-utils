@@ -1,10 +1,13 @@
 from dataclasses import dataclass, field
 
+import numpy as np
 import torch
+from PIL import Image
 from lightning import LightningDataModule
 from lightning.pytorch.trainer.states import TrainerFn
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 from torch.utils.data import DataLoader
+
 from ._dataset import Dataset, SampleType
 
 
@@ -91,6 +94,16 @@ class HugganSmithsonianButterfliesSubsetDataModule(LightningDataModule):
             collate_fn=self.collate_fn,
         )
         return dl
+
+    @classmethod
+    def show(cls, images: np.ndarray | list[Image.Image], img_per_row=None, **kwargs):
+        return Dataset.show(images, img_per_row, **kwargs)
+
+    def __getattr__(self, item):
+        try:
+            return getattr(super(), item)
+        except AttributeError:
+            return getattr(self.train_ds,item)
 
 
 DataModule = HugganSmithsonianButterfliesSubsetDataModule
