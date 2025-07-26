@@ -7,7 +7,7 @@ from lightning import LightningDataModule
 from lightning.pytorch.trainer.states import TrainerFn
 from lightning.pytorch.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 from torch.utils.data import DataLoader
-
+from loguru import logger
 from ._dataset import Dataset, SampleType
 
 
@@ -51,11 +51,15 @@ class HugganSmithsonianButterfliesSubsetDataModule(LightningDataModule):
         super().__init__()
 
     def prepare_data(self) -> None:
+        logger.debug("Preparing data...")
+        Dataset.load_dataset()
+
+    def setup(self, stage: TrainerFn) -> None:
+        logger.debug("Setting up data...")
         self.train_ds, self.val_ds = Dataset.split(
             self.config.train_ratio, True, **self.ds_kw
         )
 
-    def setup(self, stage: TrainerFn) -> None:
         assert isinstance(self.train_ds, Dataset)
         assert isinstance(self.val_ds, Dataset)
 
